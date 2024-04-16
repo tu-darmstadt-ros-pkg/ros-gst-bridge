@@ -23,6 +23,8 @@ if($ENV{CLION_IDE})
 endif()
 
 
+find_package(PkgConfig REQUIRED)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -32,26 +34,22 @@ ament_environment_hooks(register_plugin.dsv.in)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # find gstreamer
-set(gstreamer_components app pbutils audio fft net)
-find_package(GStreamer 1.8.3 REQUIRED COMPONENTS ${gstreamer_components})
+pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0)
+pkg_search_module(gstreamer-base REQUIRED IMPORTED_TARGET gstreamer-base-1.0)
+pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
+pkg_search_module(gstreamer-audio REQUIRED IMPORTED_TARGET gstreamer-audio-1.0)
+pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
+
 
 # find glib
 set(glib_components gio gio-unix gobject gthread gmodule)
-find_package(GLIB 2.28 REQUIRED COMPONENTS ${glib_components})
+find_package(GLIB REQUIRED COMPONENTS ${glib_components})
 
 ## Include messages
 find_package(std_msgs REQUIRED)
 find_package(audio_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
-# find_package(rosidl_default_generators REQUIRED)
-
-## Generate added messages and services with any dependencies listed here
-# rosidl_generate_interfaces(${PROJECT_NAME}
-#   ${msg_files}
-#   DEPENDENCIES builtin_interfaces std_msgs
-# )
-
 
 
 ###########
@@ -59,6 +57,7 @@ find_package(builtin_interfaces REQUIRED)
 ###########
 
 
+# XXX this lib build needs pruning
 add_library(gst_bridge SHARED
   src/gst_bridge.cpp
   src/rosbaseiface.cpp
@@ -73,9 +72,6 @@ target_include_directories(gst_bridge PUBLIC
   $<INSTALL_INTERFACE:include>
   ${GLIB_INCLUDE_DIRS}
   ${GOBJECT_INCLUDE_DIR}
-  ${GSTREAMER_INCLUDE_DIRS}
-  ${GSTREAMER_BASE_INCLUDE_DIRS}
-  ${GST_INCLUDE_DIRS}
 )
 target_link_libraries(gst_bridge PUBLIC
   ${rclcpp_LIBRARIES}
@@ -83,14 +79,13 @@ target_link_libraries(gst_bridge PUBLIC
   ${audio_msgs_LIBRARIES}
   ${GLIB_LIBRARIES}
   ${GLIB_GIO_LIBRARIES}
-  ${GLIB_GOBJECT_LIBRARIES}
-  ${GSTREAMER_LIBRARIES}
-  ${GSTREAMER_AUDIO_LIBRARIES}
-  ${GSTREAMER_APP_LIBRARIES}
-  ${GSTREAMER_VIDEO_LIBRARIES}
-  ${GSTREAMER_BASE_LIBRARIES}
-  ${GST_LIBRARIES}
+  PkgConfig::gstreamer
+  PkgConfig::gstreamer-app
+  PkgConfig::gstreamer-audio
+  PkgConfig::gstreamer-base
+  PkgConfig::gstreamer-video
 )
+
 
 
 # This is a gstreamer plugin, not a ros node
@@ -104,11 +99,9 @@ add_library(rosgstbridge SHARED
   src/rosaudiosrc.cpp
   src/rosimagesrc.cpp
   src/rostextsrc.cpp
-  )
+)
 
 
-#rosidl_target_interfaces(rosgstbridge
-#  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_include_directories(rosgstbridge PRIVATE
   ${rclcpp_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
@@ -117,9 +110,6 @@ target_include_directories(rosgstbridge PRIVATE
   $<INSTALL_INTERFACE:include>
   ${GLIB_INCLUDE_DIRS}
   ${GOBJECT_INCLUDE_DIR}
-  ${GSTREAMER_INCLUDE_DIRS}
-  ${GSTREAMER_BASE_INCLUDE_DIRS}
-  ${GST_INCLUDE_DIRS}
 )
 
 target_link_libraries(rosgstbridge PUBLIC
@@ -130,14 +120,12 @@ target_link_libraries(rosgstbridge PUBLIC
   ${GLIB_LIBRARIES}
   ${GLIB_GIO_LIBRARIES}
   ${GLIB_GOBJECT_LIBRARIES}
-  ${GSTREAMER_LIBRARIES}
-  ${GSTREAMER_AUDIO_LIBRARIES}
-  ${GSTREAMER_APP_LIBRARIES}
-  ${GSTREAMER_VIDEO_LIBRARIES}
-  ${GSTREAMER_BASE_LIBRARIES}
-  ${GST_LIBRARIES}
+  PkgConfig::gstreamer
+  PkgConfig::gstreamer-app
+  PkgConfig::gstreamer-audio
+  PkgConfig::gstreamer-base
+  PkgConfig::gstreamer-video
 )
-
 
 
 if(BUILD_TESTING)
@@ -147,7 +135,6 @@ endif()
 
 
 ament_export_include_directories(include)
-
 ament_export_libraries(gst_bridge)
 
 install(DIRECTORY include/

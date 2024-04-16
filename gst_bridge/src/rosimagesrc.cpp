@@ -519,7 +519,7 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
     if (!(src->step == msg->step / msg->width))
       RCLCPP_ERROR(
         ros_base_src->node_if->logging->get_logger(),
-        "image format changed during playback, step %zd != %d", src->step, msg->step / msg->width);
+        "image format changed during playback, step %ld != %d", src->step, msg->step / msg->width);
     if (!(src->height == (int)msg->height))
       RCLCPP_ERROR(
         ros_base_src->node_if->logging->get_logger(),
