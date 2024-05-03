@@ -74,11 +74,14 @@ struct _RosBaseSrcClass
   gboolean (*open)(RosBaseSrc * src);
 
   /*
-   * destroy the ros subscription(s) and unregister your callbacks and timers and prepare for ros_context->shutdown()
+   * destroy the ros subscription(s) and unregister your callbacks and timers and prepare for shutdown of the rclcpp context
    * called at gstbasesrc->change_state()  GST_STATE_CHANGE_READY_TO_NULL
    * timers and reconf callbacks are currently broken, needs a new thread with an executor, patches welcome
    */
   gboolean (*close)(RosBaseSrc * src);
+
+  gboolean (*notify_thread)(RosBaseSrc * src);
+
 };
 
 GType rosbasesrc_get_type(void);

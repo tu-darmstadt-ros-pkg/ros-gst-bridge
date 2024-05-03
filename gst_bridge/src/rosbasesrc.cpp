@@ -48,6 +48,8 @@ static void rosbasesrc_init(RosBaseSrc * src);
 static gboolean rosbasesrc_open(RosBaseSrc * src);
 static gboolean rosbasesrc_close(RosBaseSrc * src);
 
+static gboolean rosbasesrc_notify_thread (RosBaseSrc * src);
+
 /*
   XXX provide a mechanism for ROS to provide a clock
 */
@@ -211,8 +213,10 @@ static GstStateChangeReturn rosbasesrc_change_state(GstElement * element, GstSta
       break;
     }
     case GST_STATE_CHANGE_READY_TO_PAUSED:
-    //XXX stop the subscription
+      //XXX stop the subscription
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
+      rosbasesrc_notify_thread(src);
+      break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
     default:
       break;
@@ -250,6 +254,19 @@ static gboolean rosbasesrc_open(RosBaseSrc * src)
   if (src_class->open) result = src_class->open(src);
 
   return result;
+}
+
+static gboolean rosbasesrc_notify_thread (RosBaseSrc * src)
+{
+  RosBaseSrcClass *src_class = GST_ROS_BASE_SRC_GET_CLASS (src);
+  using std::placeholders::_1;
+
+  GST_DEBUG_OBJECT (src, "notify_thread");
+
+  if(src_class->notify_thread)
+    src_class->notify_thread(src);
+
+  return TRUE;
 }
 
 /* close the device */
