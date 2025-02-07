@@ -15,7 +15,9 @@
 
   <build_depend>libgstreamer1.0-dev</build_depend>
   <build_depend>libgstreamer-plugins-base1.0-dev</build_depend>
-  <build_depend>libsoup2.4-dev</build_depend>
+  <build_depend>libgstreamer-plugins-bad1.0-dev</build_depend>
+  <build_depend>libsoup2-dev</build_depend>
+  <build_depend>libjson-glib</build_depend>
 
   <build_depend>std_msgs</build_depend>
   <build_depend>gst_msgs</build_depend>
