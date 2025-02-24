@@ -137,18 +137,22 @@ gboolean rosbaseimp_open(RosBaseImp * self, gchar * node_name, gchar * node_name
 {
   gboolean result = TRUE;
 
-  self->ros_context = std::make_shared<rclcpp::Context>();
-  self->ros_context->init(0, NULL);  // XXX should expose the init arg list
-  auto opts = rclcpp::NodeOptions();
-  opts.context(self->ros_context);  //set a context to generate the node in
-  self->node =
-    std::make_shared<rclcpp::Node>(std::string(node_name), std::string(node_namespace), opts);
+  if (!self->node) {
+    if (!self->ros_context) {
+      self->ros_context = std::make_shared<rclcpp::Context>();
+      self->ros_context->init(0, NULL);  // XXX should expose the init arg list
+    }
+
+    auto opts = rclcpp::NodeOptions();
+    opts.context(self->ros_context);  //set a context to generate the node in
+    self->node =
+      std::make_shared<rclcpp::Node>(std::string(node_name), std::string(node_namespace), opts);
+  }
 
   auto ex_args = rclcpp::ExecutorOptions();
   ex_args.context = self->ros_context;
   self->ros_executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>(ex_args);
   self->ros_executor->add_node(self->node);
-  //iface->ros_executor->spin_some();
   self->spin_thread = std::thread(
     [=](rclcpp::Executor::SharedPtr e) { e->spin(); },  // lambda spin
     self->ros_executor);

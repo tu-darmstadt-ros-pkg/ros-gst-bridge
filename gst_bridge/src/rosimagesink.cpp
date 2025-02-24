@@ -59,6 +59,7 @@ enum {
   PROP_ROS_TOPIC,
   PROP_ROS_FRAME_ID,
   PROP_ROS_ENCODING,
+  PROP_ROS_NODE
 };
 
 /* pad templates */
@@ -109,6 +110,13 @@ static void rosimagesink_class_init(RosimagesinkClass * klass)
       "ros-encoding", "encoding-string", "A hack to flexibly set the encoding string", "",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_ROS_NODE,
+    g_param_spec_pointer(
+      "ros-node", "node",
+      "Pass an existing ROS node to use. If set, name and namespace are not used.",
+      G_PARAM_WRITABLE));
+
   //access gstreamer base sink events here
   basesink_class->set_caps =
     GST_DEBUG_FUNCPTR(rosimagesink_setcaps);  //gstreamer informs us what caps we're using.
@@ -142,7 +150,7 @@ void rosimagesink_set_property(
 
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      if (ros_base_sink->node_if) {
+      if (sink->pub) {
         RCLCPP_ERROR(
           ros_base_sink->node_if->logging->get_logger(), "can't change topic name once opened");
       } else {
@@ -159,6 +167,12 @@ void rosimagesink_set_property(
     case PROP_ROS_ENCODING:
       g_free(sink->encoding);
       sink->encoding = g_value_dup_string(value);
+      break;
+
+
+    case PROP_ROS_NODE:
+      ros_base_sink->node_if = gst_bridge::collect_all_node_interfaces(
+        *static_cast<rclcpp::Node *>(g_value_get_pointer(value)));
       break;
 
     default:
@@ -227,15 +241,15 @@ static gboolean rosimagesink_setcaps(GstBaseSink * gst_base_sink, GstCaps * caps
   const GstVideoFormatInfo * format_info;
 
   GST_DEBUG_OBJECT(sink, "setcaps");
+  assert(ros_base_sink->node_if != nullptr && "node_if should be initialized at this point");
 
   if (!gst_caps_is_fixed(caps)) {
     RCLCPP_ERROR(ros_base_sink->node_if->logging->get_logger(), "caps is not fixed");
   }
 
-  if (ros_base_sink->node_if)
-    RCLCPP_INFO(
-      ros_base_sink->node_if->logging->get_logger(), "preparing video with caps '%s'",
-      gst_caps_to_string(caps));
+  RCLCPP_INFO(
+    ros_base_sink->node_if->logging->get_logger(), "preparing video with caps '%s'",
+    gst_caps_to_string(caps));
 
   caps_struct = gst_caps_get_structure(caps, 0);
   if (!gst_structure_get_int(caps_struct, "width", &width))

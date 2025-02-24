@@ -102,8 +102,14 @@ typedef struct
 // collect the node interfaces from a node
 std::shared_ptr<gst_bridge::node_interface_collection> collect_all_node_interfaces(
   rclcpp::Node::SharedPtr node);
+
+__attribute_deprecated_msg__("Use reference version instead.")
 std::shared_ptr<gst_bridge::node_interface_collection> collect_all_node_interfaces(
   rclcpp::Node * node);  // support a this pointer
+
+std::shared_ptr<gst_bridge::node_interface_collection> collect_all_node_interfaces(
+  rclcpp::Node & node);
+
 
 //measure the difference between ROS and GST time
 //raw sampling of the clocks seems to be stable within about 10uS
