@@ -38,8 +38,6 @@ pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 IMPORTED_TARGET)
 pkg_check_modules(GST_RTP REQUIRED gstreamer-rtp-1.0 IMPORTED_TARGET)
 
 
-# XXX Hack around a linker bug
-#add_library(mygstrtp SHARED IMPORTED)
 #set_target_properties(mygstrtp PROPERTIES IMPORTED_LOCATION /usr/lib/x86_64-linux-gnu/libgstrtp-1.0.so)
 include(FindPkgConfig)
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0 gstreamer-plugins-base-1.0 gstreamer-pbutils-1.0)
