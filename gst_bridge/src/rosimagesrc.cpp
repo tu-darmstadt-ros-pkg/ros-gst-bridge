@@ -73,6 +73,7 @@ enum {
   PROP_ROS_FRAME_ID,
   PROP_ROS_ENCODING,
   PROP_INIT_CAPS,
+  PROP_ROS_NODE,
 };
 
 /* pad templates */
@@ -123,6 +124,13 @@ static void rosimagesrc_class_init(RosimagesrcClass * klass)
     g_param_spec_string(
       "ros-encoding", "encoding-string", "ROS message encoding string", "",
       (GParamFlags)(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_ROS_NODE,
+    g_param_spec_pointer(
+      "ros-node", "node",
+      "Pass an existing ROS node to use. If set, name and namespace are not used.",
+      G_PARAM_WRITABLE));
 
   g_object_class_install_property(
     object_class, PROP_INIT_CAPS,
@@ -181,7 +189,7 @@ void rosimagesrc_set_property(
 
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      if (ros_base_src->node_if) {
+      if (src->sub) {
         RCLCPP_ERROR(
           ros_base_src->node_if->logging->get_logger(), "can't change topic name once opened");
       } else {
@@ -199,6 +207,11 @@ void rosimagesrc_set_property(
         RCLCPP_ERROR(
           ros_base_src->node_if->logging->get_logger(), "can't change initial caps after init");
       }
+      break;
+
+    case PROP_ROS_NODE:
+      ros_base_src->node_if = gst_bridge::collect_all_node_interfaces(
+        *static_cast<rclcpp::Node *>(g_value_get_pointer(value)));
       break;
 
     default:
