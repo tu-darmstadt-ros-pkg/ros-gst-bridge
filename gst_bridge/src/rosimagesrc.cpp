@@ -59,7 +59,8 @@ static GstCaps * rosimagesrc_getcaps(
 static GstCaps * rosimagesrc_fixate(GstBaseSrc * base_src, GstCaps * caps);
 
 static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg);
-static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(Rosimagesrc * src);
+static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(
+  Rosimagesrc * src, bool clear_msg = true);
 
 static void rosimagesrc_set_msg_props_from_caps_string(Rosimagesrc * src, gchar * caps_string);
 static void rosimagesrc_set_msg_props_from_msg(
@@ -166,17 +167,14 @@ static void rosimagesrc_init(Rosimagesrc * src)
   src->init_caps = g_strdup("");
 
   src->msg_init = true;
-  src->msg_queue_max = 1;
-  // XXX why does queue segfault without expicit construction?
-  src->msg_queue = std::deque<sensor_msgs::msg::Image::ConstSharedPtr>();
+  src->last_msg = nullptr;
 
   /* configure basesrc to be a live source */
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
   /* make basesrc output a segment in time */
   gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
-  /* make basesrc set timestamps on outgoing buffers based on the running_time
-   * when they were captured */
-  gst_base_src_set_do_timestamp(GST_BASE_SRC(src), TRUE);
+  // we set the timestamp based on the ros time and the offset between ros and gstreamer time
+  gst_base_src_set_do_timestamp(GST_BASE_SRC(src), FALSE);
 }
 
 void rosimagesrc_set_property(
@@ -344,8 +342,8 @@ static gboolean rosimagesrc_close(RosBaseSrc * ros_base_src)
   src->sub.reset();
 
   //empty the queue
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  src->msg_queue.clear();
+  std::unique_lock<std::mutex> lck(src->last_msg_mutex);
+  src->last_msg = nullptr;
 
   return TRUE;
 }
@@ -357,7 +355,7 @@ static gboolean rosimagesrc_notify_thread (RosBaseSrc * ros_base_src)
   GST_DEBUG_OBJECT (src, "notify_thread");
 
   // notify any waiting threads
-  src->msg_queue_cv.notify_all();
+  src->last_msg_cv.notify_all();
 
   return TRUE;
 }
@@ -420,20 +418,14 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
   // if init_caps is not set, we wait for the first message
   // if init_caps is set, we don't wait
   if (0 == g_strcmp0(src->init_caps, "")) {
-    if (!ros_base_src->node_if) {
+    if (!src->sub) {
       GST_DEBUG_OBJECT(src, "getcaps with node not ready, returning template");
       return gst_pad_get_pad_template_caps(GST_BASE_SRC(src)->srcpad);
     }
     GST_DEBUG_OBJECT(src, "getcaps with node ready, waiting for message");
     RCLCPP_INFO(ros_base_src->node_if->logging->get_logger(), "waiting for first message");
-    msg =
-      rosimagesrc_wait_for_msg(src);  // XXX need to fix API, the action happens in a side-effect
-
-    // if(src->msg_init)
-    // {
-    //   GST_DEBUG_OBJECT (src, "getcaps with message not rx'd, returning template");
-    //   return gst_pad_get_pad_template_caps (GST_BASE_SRC (src)->srcpad);
-    // }
+    msg = rosimagesrc_wait_for_msg(
+      src, false);  // XXX need to fix API, the action happens in a side-effect
 
     format_enum = gst_bridge::getGstVideoFormat(std::string(src->encoding));
     format_str = gst_video_format_to_string(format_enum);
@@ -489,7 +481,6 @@ static GstFlowReturn rosimagesrc_create(
   Rosimagesrc * src = GST_ROSIMAGESRC(base_src);
 
   GstMapInfo info;
-  GstClockTimeDiff base_time;
   size_t length;
   GstFlowReturn ret = GST_FLOW_OK;
   GstBuffer * res_buf;
@@ -507,11 +498,6 @@ static GstFlowReturn rosimagesrc_create(
   {
     GST_DEBUG_OBJECT (src, "no message to create buffer from");
     return GST_FLOW_ERROR;
-  } else {
-    { //scope the mutex lock
-      std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-      src->msg_queue.clear();   // XXX we can stop dropping the first message during preroll now
-    }
   }
 
   length = msg->data.size();
@@ -520,8 +506,10 @@ static GstFlowReturn rosimagesrc_create(
      * ourselves
      * XXX pass the vector memory on directly */
     ret = GST_BASE_SRC_CLASS(rosimagesrc_parent_class)->alloc(base_src, offset, length, &res_buf);
-    if (G_UNLIKELY(ret != GST_FLOW_OK))
+    if (G_UNLIKELY(ret != GST_FLOW_OK)) {
       GST_DEBUG_OBJECT(src, "Failed to allocate buffer of %lu bytes", length);
+      return ret;
+    }
     *buf = res_buf;
     size = length;
   } else {
@@ -538,11 +526,12 @@ static GstFlowReturn rosimagesrc_create(
   memcpy(info.data, msg->data.data(), length);
   gst_buffer_unmap(*buf, &info);
 
-  base_time = gst_element_get_base_time(GST_ELEMENT(src));
-  GST_BUFFER_PTS(*buf) =
-    rclcpp::Time(msg->header.stamp).nanoseconds() - ros_base_src->ros_clock_offset - base_time;
+  int64_t ros_nanos = rclcpp::Time(msg->header.stamp).nanoseconds();
+  GstClockTime base_time = gst_element_get_base_time(GST_ELEMENT(src));
+  GstClockTimeDiff clock_time = ros_nanos - ros_base_src->ros_clock_offset;
+  GST_BUFFER_PTS(*buf) = clock_time > static_cast<GstClockTimeDiff>(base_time) ? clock_time - base_time : 0;
 
-  return ret;
+  return GST_FLOW_OK;
 }
 
 static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg)
@@ -579,27 +568,31 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
         msg->encoding.c_str());
   }
 
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  src->msg_queue.push_front(msg);
-  while (src->msg_queue.size() > src->msg_queue_max) {
-    src->msg_queue.pop_front();
-    RCLCPP_WARN(ros_base_src->node_if->logging->get_logger(), "dropping message");
+  GstClockTimeDiff clock_time = rclcpp::Time(msg->header.stamp).nanoseconds() - ros_base_src->ros_clock_offset;
+  if (clock_time < static_cast<GstClockTimeDiff>(gst_element_get_base_time(GST_ELEMENT(src)))) {
+    GST_DEBUG_OBJECT(src, "image message too old, dropping");
+    return;
   }
-  src->msg_queue_cv.notify_one();
+
+  std::unique_lock<std::mutex> lck(src->last_msg_mutex);
+  src->last_msg = msg;
+  src->last_msg_cv.notify_one();
 }
 
-static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(Rosimagesrc * src)
+static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(
+  Rosimagesrc * src, bool clear_msg)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
 
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  src->msg_queue_cv.wait(lck);
-  if (src->msg_queue.empty())
-  {
+  std::unique_lock<std::mutex> lck(src->last_msg_mutex);
+  src->last_msg_cv.wait(lck, [src]() { return src->last_msg != nullptr; });
+  if (src->last_msg == nullptr) {
+    GST_DEBUG_OBJECT(src, "no message to create buffer from");
     // the wait was interrupted
     return sensor_msgs::msg::Image::ConstSharedPtr();
   }
-  auto msg = src->msg_queue.front();
+  auto msg = src->last_msg;
+  if (clear_msg) src->last_msg = nullptr;
 
   return msg;
 }

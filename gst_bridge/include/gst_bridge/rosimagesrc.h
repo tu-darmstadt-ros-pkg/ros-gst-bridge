@@ -56,11 +56,9 @@ struct _Rosimagesrc
 
   bool msg_init;
 
-  // XXX this is too much boilerplate.
-  size_t msg_queue_max;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
+  sensor_msgs::msg::Image::ConstSharedPtr last_msg;
+  std::mutex last_msg_mutex;
+  std::condition_variable last_msg_cv;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub;
 
