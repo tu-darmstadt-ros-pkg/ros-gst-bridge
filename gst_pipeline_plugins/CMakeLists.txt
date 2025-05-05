@@ -34,13 +34,7 @@ find_package(TinyXML2 REQUIRED)  # provided by tinyxml2 upstream, or tinyxml2_ve
 # Thanks clydemcqueen for gscam2
 # Gstreamer doesn't provide CMake files
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 IMPORTED_TARGET)
-pkg_check_modules(GST_RTP REQUIRED gstreamer-rtp-1.0 IMPORTED_TARGET)
-
-
-# XXX Hack around a linker bug
-add_library(mygstrtp SHARED IMPORTED)
-set_target_properties(mygstrtp PROPERTIES IMPORTED_LOCATION /usr/lib/x86_64-linux-gnu/libgstrtp-1.0.so)
+pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-rtp-1.0)
 
 
 ## Include messages
@@ -68,14 +62,14 @@ add_library(${PROJECT_NAME} SHARED
   src/buffer_observer.cpp
   src/clock_observer.cpp
   src/metadata_hook.cpp
-    src/meta/gstmark.c
+  src/meta/gstmark.c
   src/rtp_header_hook.cpp
   src/parameters.cpp
-    src/parameters/parameter_conversions.cpp
-
+  src/parameters/parameter_conversions.cpp
 )
+target_include_directories(${PROJECT_NAME} PUBLIC ${GST_INCLUDE_DIRS})
 
-target_link_libraries(${PROJECT_NAME} mygstrtp)
+target_link_libraries(${PROJECT_NAME} ${GST_LIBRARIES})
 
 ament_target_dependencies(${PROJECT_NAME}
   gst_pipeline
@@ -87,8 +81,7 @@ ament_target_dependencies(${PROJECT_NAME}
   std_srvs
   sensor_msgs
   gst_msgs
-  GSTREAMER
-  GST_RTP
+  GST
 )
 
 pluginlib_export_plugin_description_file(gst_pipeline plugins.xml)
