@@ -29,7 +29,6 @@
 #include <mutex>               // std::mutex, std::unique_lock
 #include <deque>               // std::queue
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
 
 G_BEGIN_DECLS
 
@@ -55,12 +54,13 @@ struct _Rosimagesrc
   gchar * init_caps;
 
   bool msg_init;
+  bool compressed;
 
-  sensor_msgs::msg::Image::ConstSharedPtr last_msg;
+  std::shared_ptr<const void> last_msg;
   std::mutex last_msg_mutex;
   std::condition_variable last_msg_cv;
 
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub;
+  rclcpp::SubscriptionBase::SharedPtr sub;
 
   int height;
   int width;

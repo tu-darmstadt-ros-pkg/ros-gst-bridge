@@ -41,7 +41,7 @@
 //     S24_32LE, U24_32LE, S24LE, U24LE, S20LE, U20LE, S18LE, U18LE,
 
 #define ROS_IMAGE_MSG_CAPS                     \
-  "video/x-raw, "                              \
+  "image/jpeg;image/png;video/x-raw, "         \
   "format = " GST_BRIDGE_GST_VIDEO_FORMAT_LIST \
   ", "                                         \
   "framerate = " GST_VIDEO_FPS_RANGE           \

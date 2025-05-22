@@ -31,6 +31,8 @@
  */
 
 #include <gst_bridge/rosimagesrc.h>
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 
 GST_DEBUG_CATEGORY_STATIC(rosimagesrc_debug_category);
 #define GST_CAT_DEFAULT rosimagesrc_debug_category
@@ -59,12 +61,15 @@ static GstCaps * rosimagesrc_getcaps(
 static GstCaps * rosimagesrc_fixate(GstBaseSrc * base_src, GstCaps * caps);
 
 static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg);
-static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(
+static void rosimagesrc_compressed_sub_cb(Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
+static std::shared_ptr<const void> rosimagesrc_wait_for_msg(
   Rosimagesrc * src, bool clear_msg = true);
 
 static void rosimagesrc_set_msg_props_from_caps_string(Rosimagesrc * src, gchar * caps_string);
 static void rosimagesrc_set_msg_props_from_msg(
   Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg);
+static void rosimagesrc_set_msg_props_from_msg(
+  Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
 static void rosimagesrc_set_msg_props(
   Rosimagesrc * src, int width, int height, size_t step, gint endianness, gchar * encoding);
 
@@ -75,6 +80,7 @@ enum {
   PROP_ROS_ENCODING,
   PROP_INIT_CAPS,
   PROP_ROS_NODE,
+  PROP_COMPRESSED,
 };
 
 /* pad templates */
@@ -139,6 +145,14 @@ static void rosimagesrc_class_init(RosimagesrcClass * klass)
       "init-caps", "initial-caps", "optional caps filter to skip wait for first message", "",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_COMPRESSED,
+    g_param_spec_boolean(
+      "compressed", "compressed",
+      "Subscribe compressed image topic (default: false). Output will be jpeg or png.", false,
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS))
+  );
+
   ros_base_src_class->open =
     GST_DEBUG_FUNCPTR(rosimagesrc_open);  //let the base sink know how we register publishers
   ros_base_src_class->close =
@@ -165,6 +179,7 @@ static void rosimagesrc_init(Rosimagesrc * src)
   src->frame_id = g_strdup("");
   src->encoding = g_strdup("");
   src->init_caps = g_strdup("");
+  src->compressed = false;
 
   src->msg_init = true;
   src->last_msg = nullptr;
@@ -212,6 +227,15 @@ void rosimagesrc_set_property(
         *static_cast<rclcpp::Node *>(g_value_get_pointer(value)));
       break;
 
+    case PROP_COMPRESSED:
+      if (src->sub) {
+        RCLCPP_ERROR(
+          ros_base_src->node_if->logging->get_logger(), "can't change compressed once opened");
+      } else {
+        src->compressed = g_value_get_boolean(value);
+      }
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -239,6 +263,10 @@ void rosimagesrc_get_property(
 
     case PROP_INIT_CAPS:
       g_value_set_string(value, src->init_caps);
+      break;
+
+    case PROP_COMPRESSED:
+      g_value_set_boolean(value, src->compressed);
       break;
 
     default:
@@ -280,6 +308,7 @@ static void rosimagesrc_set_msg_props_from_caps_string(Rosimagesrc * src, gchar 
   }
   rosimagesrc_set_msg_props(src, width, height, step, endianness, encoding);
 }
+
 static void rosimagesrc_set_msg_props_from_msg(
   Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
@@ -290,6 +319,51 @@ static void rosimagesrc_set_msg_props_from_msg(
   gchar * encoding = g_strdup(msg->encoding.c_str());
 
   rosimagesrc_set_msg_props(src, width, height, step, endianness, encoding);
+  g_free(encoding);
+}
+
+static void rosimagesrc_set_msg_props_from_msg(
+  Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg)
+{
+  int width = 0;
+  int height = 0;
+  gchar * encoding = nullptr;
+
+   // Determine format from the format field
+  if (msg->format.find("jpeg compressed") != std::string::npos) {
+    encoding = g_strdup("JPEG");
+
+    // Try to extract JPEG dimensions without full decoding
+    if (msg->data.size() >= 4) {
+      const unsigned char *data = msg->data.data();
+      size_t data_size = msg->data.size();
+
+      // Simple JPEG header parsing
+      for (size_t i = 0; i < data_size - 8; i++) {
+        // Look for Start Of Frame marker (SOF0, SOF1, SOF2)
+        if (data[i] == 0xFF && (data[i+1] == 0xC0 || data[i+1] == 0xC1 || data[i+1] == 0xC2)) {
+          height = (data[i+5] << 8) | data[i+6];
+          width = (data[i+7] << 8) | data[i+8];
+          break;
+        }
+      }
+    }
+  } else if (msg->format.find("png compressed") != std::string::npos) {
+    encoding = g_strdup("PNG");
+
+    // Very basic PNG dimension extraction
+    if (msg->data.size() >= 24) {
+      const unsigned char *data = msg->data.data();
+      // PNG dimensions are at offset 16
+      width = (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
+      height = (data[20] << 24) | (data[21] << 16) | (data[22] << 8) | data[23];
+    }
+  } else {
+    GST_ERROR_OBJECT(src, "Unsupported compressed image format: %s", msg->format.c_str());
+  }
+
+  rosimagesrc_set_msg_props(src, width, height, 0, G_LITTLE_ENDIAN, encoding);
+  g_free(encoding);
 }
 
 static void rosimagesrc_set_msg_props(
@@ -320,13 +394,21 @@ static gboolean rosimagesrc_open(RosBaseSrc * ros_base_src)
 
   GST_DEBUG_OBJECT(src, "open");
 
-  // ROS can't cope with some forms of std::bind being passed as subscriber callbacks,
-  // lambdas seem to be the preferred case for these instances
-  auto cb = [src](sensor_msgs::msg::Image::ConstSharedPtr msg) { rosimagesrc_sub_cb(src, msg); };
   rclcpp::QoS qos = rclcpp::SensorDataQoS();  //XXX add a parameter for overrides
 
-  src->sub = rclcpp::create_subscription<sensor_msgs::msg::Image>(
-    ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
+  if (src->compressed) {
+    src->sub = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
+      ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos,
+      [src](sensor_msgs::msg::CompressedImage::ConstSharedPtr msg) {
+        rosimagesrc_compressed_sub_cb(src, msg);
+      });
+  } else {
+    // ROS can't cope with some forms of std::bind being passed as subscriber callbacks,
+    // lambdas seem to be the preferred case for these instances
+    auto cb = [src](sensor_msgs::msg::Image::ConstSharedPtr msg) { rosimagesrc_sub_cb(src, msg); };
+    src->sub = rclcpp::create_subscription<sensor_msgs::msg::Image>(
+      ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
+  }
 
   return TRUE;
 }
@@ -399,7 +481,7 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
 
   const gchar * format_str;
   GstVideoFormat format_enum;
-  static sensor_msgs::msg::Image::ConstSharedPtr msg;
+  static std::shared_ptr<const void> msg;
   GstCaps * caps;
 
   Rosimagesrc * src = GST_ROSIMAGESRC(base_src);
@@ -426,13 +508,28 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
       GST_DEBUG_OBJECT(src, "no message to create caps from");
       return gst_pad_get_pad_template_caps(GST_BASE_SRC(src)->srcpad);
     }
+    if (src->msg_init) {
+      if (src->compressed) {
+        auto image_msg = std::static_pointer_cast<const sensor_msgs::msg::CompressedImage>(msg);
+        rosimagesrc_set_msg_props_from_msg(src, image_msg);
+      } else {
+        auto image_msg = std::static_pointer_cast<const sensor_msgs::msg::Image>(msg);
+        rosimagesrc_set_msg_props_from_msg(src, image_msg);
+      }
+    }
 
-    format_enum = gst_bridge::getGstVideoFormat(std::string(src->encoding));
-    format_str = gst_video_format_to_string(format_enum);
+    if (src->compressed) {
+      caps = gst_caps_new_simple(
+        std::strcmp(src->encoding, "JPEG") == 0 ? "image/jpeg" : "image/png", "width", G_TYPE_INT, src->width,
+        "height", G_TYPE_INT, src->height, NULL);
+    } else {
+      format_enum = gst_bridge::getGstVideoFormat(std::string(src->encoding));
+      format_str = gst_video_format_to_string(format_enum);
 
-    caps = gst_caps_new_simple(
-      "video/x-raw", "format", G_TYPE_STRING, format_str, "height", G_TYPE_INT, src->height,
-      "width", G_TYPE_INT, src->width, NULL);
+      caps = gst_caps_new_simple(
+        "video/x-raw", "format", G_TYPE_STRING, format_str, "height", G_TYPE_INT, src->height,
+        "width", G_TYPE_INT, src->width, NULL);
+    }
 
     gchar * caps_str = gst_caps_to_string(caps);
     GST_DEBUG_OBJECT(src, "getcaps after first message returning %s", caps_str);
@@ -500,7 +597,11 @@ static GstFlowReturn rosimagesrc_create(
     return GST_FLOW_ERROR;
   }
 
-  length = msg->data.size();
+  if (src->compressed) {
+    length = std::static_pointer_cast<const sensor_msgs::msg::CompressedImage>(msg)->data.size();
+  } else {
+    length = std::static_pointer_cast<const sensor_msgs::msg::Image>(msg)->data.size();
+  }
   if (*buf == NULL) {
     /* downstream did not provide us with a buffer to fill, allocate one
      * ourselves
@@ -520,13 +621,21 @@ static GstFlowReturn rosimagesrc_create(
 
   if (length != size) GST_DEBUG_OBJECT(src, "size mismatch, %ld, %d", length, size);
 
+  int64_t ros_nanos = 0;
   // XXX check the buffer exists, and check info.size > length
   gst_buffer_map(*buf, &info, GST_MAP_READ);
   info.size = length;
-  memcpy(info.data, msg->data.data(), length);
+  if (src->compressed) {
+    auto image_msg = std::static_pointer_cast<const sensor_msgs::msg::CompressedImage>(msg);
+    memcpy(info.data, image_msg->data.data(), length);
+    ros_nanos = rclcpp::Time(image_msg->header.stamp).nanoseconds();
+  } else {
+    auto image_msg = std::static_pointer_cast<const sensor_msgs::msg::Image>(msg);
+    memcpy(info.data, image_msg->data.data(), length);
+    ros_nanos = rclcpp::Time(image_msg->header.stamp).nanoseconds();
+  }
   gst_buffer_unmap(*buf, &info);
 
-  int64_t ros_nanos = rclcpp::Time(msg->header.stamp).nanoseconds();
   GstClockTime base_time = gst_element_get_base_time(GST_ELEMENT(src));
   GstClockTimeDiff clock_time = ros_nanos - ros_base_src->ros_clock_offset;
   GST_BUFFER_PTS(*buf) =
@@ -581,8 +690,32 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
   src->last_msg_cv.notify_one();
 }
 
-static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(
-  Rosimagesrc * src, bool clear_msg)
+static void rosimagesrc_compressed_sub_cb(Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg)
+{
+  RosBaseSrc * ros_base_src = GST_ROS_BASE_SRC(src);
+  //GST_DEBUG_OBJECT (src, "ros cb called");
+  //RCLCPP_DEBUG(ros_base_src->node_if->logging->get_logger(), "ros cb called");
+
+  //fetch caps from the first msg, check on subsequent
+  if (src->msg_init) {
+    rosimagesrc_set_msg_props_from_msg(src, msg);
+  } else {
+    // TODO notice format changes
+  }
+
+  GstClockTimeDiff clock_time =
+    rclcpp::Time(msg->header.stamp).nanoseconds() - ros_base_src->ros_clock_offset;
+  if (clock_time < static_cast<GstClockTimeDiff>(gst_element_get_base_time(GST_ELEMENT(src)))) {
+    GST_DEBUG_OBJECT(src, "image message too old, dropping");
+    return;
+  }
+
+  std::unique_lock lck(src->last_msg_mutex);
+  src->last_msg = msg;
+  src->last_msg_cv.notify_one();
+}
+
+static std::shared_ptr<const void> rosimagesrc_wait_for_msg(Rosimagesrc * src, bool clear_msg)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
 
