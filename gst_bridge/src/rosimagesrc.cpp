@@ -636,6 +636,14 @@ static GstFlowReturn rosimagesrc_create(
   gst_buffer_unmap(*buf, &info);
 
   GstClockTime base_time = gst_element_get_base_time(GST_ELEMENT(src));
+  if (ros_nanos < ros_base_src->ros_clock_offset) {
+    GST_ERROR_OBJECT(
+      src,
+      "Image message time %ld is before ros clock offset %ld, adjusting offset. "
+      "If this happens multiple time, you should fix this.",
+      ros_nanos, ros_base_src->ros_clock_offset);
+    ros_base_src->ros_clock_offset = ros_nanos - base_time;
+  }
   GstClockTimeDiff clock_time = ros_nanos - ros_base_src->ros_clock_offset;
   GST_BUFFER_PTS(*buf) =
     clock_time > static_cast<GstClockTimeDiff>(base_time) ? clock_time - base_time : 0;
@@ -675,13 +683,6 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
         ros_base_src->node_if->logging->get_logger(),
         "image format changed during playback, encoding %s != %s", src->encoding,
         msg->encoding.c_str());
-  }
-
-  GstClockTimeDiff clock_time =
-    rclcpp::Time(msg->header.stamp).nanoseconds() - ros_base_src->ros_clock_offset;
-  if (clock_time < static_cast<GstClockTimeDiff>(gst_element_get_base_time(GST_ELEMENT(src)))) {
-    GST_DEBUG_OBJECT(src, "image message too old, dropping");
-    return;
   }
 
   std::unique_lock lck(src->last_msg_mutex);
