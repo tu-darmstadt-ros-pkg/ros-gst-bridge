@@ -31,8 +31,9 @@
  */
 
 #include <gst_bridge/rosimagesrc.h>
-#include <sensor_msgs/msg/image.hpp>
+
 #include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/msg/image.hpp>
 
 GST_DEBUG_CATEGORY_STATIC(rosimagesrc_debug_category);
 #define GST_CAT_DEFAULT rosimagesrc_debug_category
@@ -61,7 +62,8 @@ static GstCaps * rosimagesrc_getcaps(
 static GstCaps * rosimagesrc_fixate(GstBaseSrc * base_src, GstCaps * caps);
 
 static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg);
-static void rosimagesrc_compressed_sub_cb(Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
+static void rosimagesrc_compressed_sub_cb(
+  Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
 static std::shared_ptr<const void> rosimagesrc_wait_for_msg(
   Rosimagesrc * src, bool clear_msg = true);
 
@@ -150,15 +152,13 @@ static void rosimagesrc_class_init(RosimagesrcClass * klass)
     g_param_spec_boolean(
       "compressed", "compressed",
       "Subscribe compressed image topic (default: false). Output will be jpeg or png.", false,
-      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS))
-  );
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   ros_base_src_class->open =
     GST_DEBUG_FUNCPTR(rosimagesrc_open);  //let the base sink know how we register publishers
   ros_base_src_class->close =
     GST_DEBUG_FUNCPTR(rosimagesrc_close);  //let the base sink know how we destroy publishers
-  ros_base_src_class->notify_thread =
-    GST_DEBUG_FUNCPTR(rosimagesrc_notify_thread);
+  ros_base_src_class->notify_thread = GST_DEBUG_FUNCPTR(rosimagesrc_notify_thread);
 
   basesrc_class->create = GST_DEBUG_FUNCPTR(rosimagesrc_create);
   basesrc_class->get_caps = GST_DEBUG_FUNCPTR(rosimagesrc_getcaps);  //return caps within the filter
@@ -168,7 +168,6 @@ static void rosimagesrc_class_init(RosimagesrcClass * klass)
   //basesrc_class->negotiate = GST_DEBUG_FUNCPTR (rosimagesrc_negotiate);  //start figuring out caps and allocators
   //basesrc_class->event = GST_DEBUG_FUNCPTR (rosimagesrc_event);  //flush events can cause discontinuities (flags exist in buffers)
   //basesrc_class->get_times = GST_DEBUG_FUNCPTR (rosimagesrc_get_times); //asks us for start and stop times (?)
-
 }
 
 static void rosimagesrc_init(Rosimagesrc * src)
@@ -329,21 +328,22 @@ static void rosimagesrc_set_msg_props_from_msg(
   int height = 0;
   gchar * encoding = nullptr;
 
-   // Determine format from the format field
+  // Determine format from the format field
   if (msg->format.find("jpeg compressed") != std::string::npos) {
     encoding = g_strdup("JPEG");
 
     // Try to extract JPEG dimensions without full decoding
     if (msg->data.size() >= 4) {
-      const unsigned char *data = msg->data.data();
+      const unsigned char * data = msg->data.data();
       size_t data_size = msg->data.size();
 
       // Simple JPEG header parsing
       for (size_t i = 0; i < data_size - 8; i++) {
         // Look for Start Of Frame marker (SOF0, SOF1, SOF2)
-        if (data[i] == 0xFF && (data[i+1] == 0xC0 || data[i+1] == 0xC1 || data[i+1] == 0xC2)) {
-          height = (data[i+5] << 8) | data[i+6];
-          width = (data[i+7] << 8) | data[i+8];
+        if (
+          data[i] == 0xFF && (data[i + 1] == 0xC0 || data[i + 1] == 0xC1 || data[i + 1] == 0xC2)) {
+          height = (data[i + 5] << 8) | data[i + 6];
+          width = (data[i + 7] << 8) | data[i + 8];
           break;
         }
       }
@@ -353,7 +353,7 @@ static void rosimagesrc_set_msg_props_from_msg(
 
     // Very basic PNG dimension extraction
     if (msg->data.size() >= 24) {
-      const unsigned char *data = msg->data.data();
+      const unsigned char * data = msg->data.data();
       // PNG dimensions are at offset 16
       width = (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
       height = (data[20] << 24) | (data[21] << 16) | (data[22] << 8) | data[23];
@@ -426,11 +426,11 @@ static gboolean rosimagesrc_close(RosBaseSrc * ros_base_src)
   return TRUE;
 }
 
-static gboolean rosimagesrc_notify_thread (RosBaseSrc * ros_base_src)
+static gboolean rosimagesrc_notify_thread(RosBaseSrc * ros_base_src)
 {
-  Rosimagesrc *src = GST_ROSIMAGESRC (ros_base_src);
+  Rosimagesrc * src = GST_ROSIMAGESRC(ros_base_src);
 
-  GST_DEBUG_OBJECT (src, "notify_thread");
+  GST_DEBUG_OBJECT(src, "notify_thread");
 
   // notify any waiting threads
   src->last_msg_cv.notify_all();
@@ -520,8 +520,8 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
 
     if (src->compressed) {
       caps = gst_caps_new_simple(
-        std::strcmp(src->encoding, "JPEG") == 0 ? "image/jpeg" : "image/png", "width", G_TYPE_INT, src->width,
-        "height", G_TYPE_INT, src->height, NULL);
+        std::strcmp(src->encoding, "JPEG") == 0 ? "image/jpeg" : "image/png", "width", G_TYPE_INT,
+        src->width, "height", G_TYPE_INT, src->height, NULL);
     } else {
       format_enum = gst_bridge::getGstVideoFormat(std::string(src->encoding));
       format_str = gst_video_format_to_string(format_enum);
@@ -591,9 +591,8 @@ static GstFlowReturn rosimagesrc_create(
   }
 
   auto msg = rosimagesrc_wait_for_msg(src);
-  if (!msg)
-  {
-    GST_DEBUG_OBJECT (src, "no message to create buffer from");
+  if (!msg) {
+    GST_DEBUG_OBJECT(src, "no message to create buffer from");
     return GST_FLOW_ERROR;
   }
 
@@ -690,7 +689,8 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
   src->last_msg_cv.notify_one();
 }
 
-static void rosimagesrc_compressed_sub_cb(Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg)
+static void rosimagesrc_compressed_sub_cb(
+  Rosimagesrc * src, sensor_msgs::msg::CompressedImage::ConstSharedPtr msg)
 {
   RosBaseSrc * ros_base_src = GST_ROS_BASE_SRC(src);
   //GST_DEBUG_OBJECT (src, "ros cb called");
