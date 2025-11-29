@@ -704,13 +704,6 @@ static void rosimagesrc_compressed_sub_cb(
     // TODO notice format changes
   }
 
-  GstClockTimeDiff clock_time =
-    rclcpp::Time(msg->header.stamp).nanoseconds() - ros_base_src->ros_clock_offset;
-  if (clock_time < static_cast<GstClockTimeDiff>(gst_element_get_base_time(GST_ELEMENT(src)))) {
-    GST_DEBUG_OBJECT(src, "image message too old, dropping");
-    return;
-  }
-
   std::unique_lock lck(src->last_msg_mutex);
   src->last_msg = msg;
   src->last_msg_cv.notify_one();
